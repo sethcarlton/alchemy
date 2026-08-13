@@ -123,6 +123,7 @@ const readWorkflowRow = (stack: Test.ScratchStack) =>
             workflowId: string;
             workflowName: string;
             accountId: string;
+            schedules?: string[];
           };
         };
       }
@@ -160,6 +161,9 @@ test.provider(
       expect(row).toBeDefined();
       expect(row!.attr?.workflowId).toMatch(/^dev:/);
       expect(row!.providerMode).toBe("local");
+      // The local provider records the declared schedules (the simulator
+      // does not fire them).
+      expect(row!.attr?.schedules).toEqual(["0 0 29 2 *"]);
 
       // Drive the workflow through the binding against local workerd.
       const url = deployed.worker.url!;
@@ -214,6 +218,8 @@ test.provider(
         workflowName,
       });
       expect(live.id).toBe(row!.attr!.workflowId);
+      // The Effect-native class form registered its declared schedule.
+      expect((live.schedules ?? []).map((s) => s.cron)).toEqual(["0 0 29 2 *"]);
 
       // Round-trip an instance through the real edge.
       const url = deployed.worker.url!;

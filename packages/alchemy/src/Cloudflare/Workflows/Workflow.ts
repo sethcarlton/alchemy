@@ -288,11 +288,25 @@ export const isWorkflowExport = (value: unknown): value is WorkflowExport =>
   (value as any).kind === "workflow";
 
 /**
+ * Props shared by every form of {@link Workflow} — the Effect-native class
+ * form and the reference (async) form alike.
+ */
+export interface WorkflowProps {
+  /**
+   * Cron expressions that start Workflow instances automatically.
+   *
+   * Pass an empty array to remove all schedules. Scheduled Workflows are not
+   * fired by Alchemy's local Workflow simulator.
+   */
+  schedules?: string[];
+}
+
+/**
  * Props for the reference (async) form of {@link Workflow}. Used when binding
  * a Workflow class to a plain async Worker (one without an Effect runtime) via
  * the Worker's `env`. Mirrors `DurableObjectProps`.
  */
-export interface WorkflowRefProps {
+export interface WorkflowRefProps extends WorkflowProps {
   /**
    * Name of the exported `WorkflowEntrypoint` class.
    *
@@ -321,6 +335,8 @@ export interface WorkflowLike<Params = unknown> {
   className?: string;
   /** @internal phantom */
   scriptName?: Input<string>;
+  /** @internal phantom */
+  schedules?: string[];
   /** @internal phantom */
   Params?: Params;
 }
@@ -440,6 +456,17 @@ export interface WorkflowClass extends Effect.Effect<
     > & {
       new (_: never): WorkflowImpl<Input, Result>;
     };
+    <Input = unknown, Result = unknown, InitReq = never>(
+      name: string,
+      props: WorkflowProps,
+      impl: Effect.Effect<WorkflowImpl<Input, Result>, ConfigError, InitReq>,
+    ): Effect.Effect<
+      WorkflowHandle<Input, Result>,
+      never,
+      Worker | Exclude<InitReq, WorkflowServices>
+    > & {
+      new (_: never): WorkflowImpl<Input, Result>;
+    };
   };
   <Params = unknown>(
     name: string,
@@ -447,6 +474,15 @@ export interface WorkflowClass extends Effect.Effect<
   ): WorkflowLike<Params>;
   <Input = unknown, Result = unknown, InitReq = never>(
     name: string,
+    impl: Effect.Effect<WorkflowImpl<Input, Result>, ConfigError, InitReq>,
+  ): Effect.Effect<
+    WorkflowHandle<Input, Result>,
+    never,
+    Worker | Exclude<InitReq, WorkflowServices>
+  >;
+  <Input = unknown, Result = unknown, InitReq = never>(
+    name: string,
+    props: WorkflowProps,
     impl: Effect.Effect<WorkflowImpl<Input, Result>, ConfigError, InitReq>,
   ): Effect.Effect<
     WorkflowHandle<Input, Result>,
@@ -494,6 +530,19 @@ export class WorkflowScope extends Context.Service<
  * ```typescript
  * export default class MyWorkflow extends Cloudflare.Workflow<MyWorkflow>()(
  *   "MyWorkflow",
+ *   Effect.gen(function* () {
+ *     return Effect.fn(function* (input: { name: string }) {
+ *       return { received: input.name };
+ *     });
+ *   }),
+ * ) {}
+ * ```
+ *
+ * @example Scheduling Workflow instances
+ * ```typescript
+ * export default class HourlyWorkflow extends Cloudflare.Workflow<HourlyWorkflow>()(
+ *   "HourlyWorkflow",
+ *   { schedules: ["0 * * * *"] },
  *   Effect.gen(function* () {
  *     return Effect.fn(function* (input: { name: string }) {
  *       return { received: input.name };
@@ -748,25 +797,41 @@ export const Workflow: WorkflowClass = taggedFunction(WorkflowScope, ((
   ...args:
     | []
     | [name: string, impl: Effect.Effect<WorkflowImpl<any, any>>]
+    | [
+        name: string,
+        props: WorkflowProps,
+        impl: Effect.Effect<WorkflowImpl<any, any>>,
+      ]
     | [name: string, props?: WorkflowRefProps]
 ) => {
   if (args.length === 0) {
     return Workflow;
   }
-  const [name, second] = args;
-  if (!Effect.isEffect(second)) {
-    // Props-only (async) reference form: returns a plain `WorkflowLike` that an
-    // async Worker binds via `env`. `WorkerAsyncBindings` emits the `workflow`
-    // binding and drives `putWorkflow` for locally-hosted workflows.
-    const props = second as WorkflowRefProps | undefined;
-    return {
-      kind: TypeId,
-      name,
-      className: props?.className ?? name,
-      scriptName: props?.scriptName,
-    } satisfies WorkflowLike;
+  const name = args[0];
+  let props: WorkflowProps | undefined;
+  let impl: Effect.Effect<WorkflowImpl<any, any>>;
+  if (args.length === 3) {
+    props = args[1];
+    impl = args[2];
+  } else {
+    const second = args[1];
+    if (Effect.isEffect(second)) {
+      props = undefined;
+      impl = second;
+    } else {
+      // Props-only (async) reference form: returns a plain `WorkflowLike` that
+      // an async Worker binds via `env`. `WorkerAsyncBindings` emits the
+      // `workflow` binding and drives `putWorkflow` for locally-hosted
+      // workflows.
+      return {
+        kind: TypeId,
+        name,
+        className: second?.className ?? name,
+        scriptName: second?.scriptName,
+        schedules: second?.schedules,
+      } satisfies WorkflowLike;
+    }
   }
-  const impl = second;
   return effectClass(
     Effect.gen(function* () {
       const worker = yield* Worker;
@@ -778,6 +843,7 @@ export const Workflow: WorkflowClass = taggedFunction(WorkflowScope, ((
         workflowName,
         className: name,
         scriptName: worker.workerName,
+        schedules: props?.schedules ?? [],
       });
 
       // Add the workflow binding to the Worker metadata
@@ -864,6 +930,7 @@ export interface WorkflowResourceProps {
   workflowName: string;
   className: string;
   scriptName: string;
+  schedules: string[];
 }
 
 export interface WorkflowResourceAttrs {
@@ -871,6 +938,12 @@ export interface WorkflowResourceAttrs {
   workflowName: string;
   className: string;
   scriptName: string;
+  /**
+   * Cron schedules observed on the Workflow. Fresh provider results always
+   * include an array; this is optional because state persisted before
+   * Workflow schedule support does not contain the field.
+   */
+  schedules?: string[];
   accountId: string;
 }
 
@@ -914,6 +987,9 @@ export const ProviderLive = () =>
                 // payload on some accounts — fall back so listing succeeds.
                 className: wf.className ?? "",
                 scriptName: wf.scriptName ?? "",
+                schedules: (wf.schedules ?? []).map(
+                  (schedule) => schedule.cron,
+                ),
                 accountId,
               })),
             ),
@@ -937,6 +1013,9 @@ export const ProviderLive = () =>
             workflowName: workflow.name,
             className: workflow.className,
             scriptName: workflow.scriptName,
+            schedules: (workflow.schedules ?? []).map(
+              (schedule) => schedule.cron,
+            ),
             accountId: acct,
           })),
           Effect.catchTag("WorkflowNotFound", () => Effect.succeed(undefined)),
@@ -956,12 +1035,14 @@ export const ProviderLive = () =>
         workflowName,
         className: news.className,
         scriptName: news.scriptName,
+        schedules: news.schedules.map((cron) => ({ cron })),
       });
       return {
         workflowId: result.id,
         workflowName: result.name,
         className: result.className,
         scriptName: result.scriptName,
+        schedules: news.schedules,
         accountId: acct,
       };
     }),
@@ -1009,6 +1090,7 @@ export const ProviderLocal = () =>
         workflowName: news.workflowName,
         className: news.className,
         scriptName: news.scriptName,
+        schedules: news.schedules,
         accountId: output?.accountId ?? accountId,
       };
     }),

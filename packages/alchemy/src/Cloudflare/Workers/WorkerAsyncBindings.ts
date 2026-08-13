@@ -133,6 +133,14 @@ export const bindWorkerAsyncBindings = Effect.fn(function* (
         let resolvedBindingMeta: InputProps<WorkerBinding> = bindingMeta;
 
         if (isWorkflowLike(binding)) {
+          if (
+            binding.scriptName !== undefined &&
+            binding.schedules !== undefined
+          ) {
+            return yield* Effect.die(
+              `Workflow "${binding.name}" cannot declare schedules when scriptName references another Worker; configure schedules on the Worker that defines the Workflow`,
+            );
+          }
           const className = binding.className ?? binding.name;
           const scriptName = binding.scriptName ?? resource.workerName;
           const workflowName = makeWorkflowName(scriptName, className);
@@ -150,6 +158,7 @@ export const bindWorkerAsyncBindings = Effect.fn(function* (
               workflowName,
               className,
               scriptName: resource.workerName,
+              schedules: binding.schedules ?? [],
             });
           }
         }

@@ -14,8 +14,9 @@ survive crashes — a checkout flow, a multi-stage pipeline, a "send a
 reminder in 24 hours" job. If you only need request/response
 compute, a [Worker](/cloudflare/compute/workers) is enough; per-entity
 state, a [Durable Object](/cloudflare/compute/durable-objects); buffered
-fan-out of messages, [Queues](/cloudflare/messaging/queues); a fixed schedule,
-[cron](/cloudflare/messaging/cron).
+fan-out of messages, [Queues](/cloudflare/messaging/queues). Workflows can
+start on a native cron schedule; use [Worker cron triggers](/cloudflare/messaging/cron)
+when a Worker's `scheduled` handler should run instead.
 
 ## Define a workflow
 
@@ -37,6 +38,30 @@ export default class MyWorkflow extends Cloudflare.Workflow<MyWorkflow>()(
   }),
 ) {}
 ```
+
+## Start runs on a schedule
+
+Pass cron expressions in `schedules` to start Workflow instances without a
+Worker `scheduled` handler:
+
+```typescript
+export default class HourlyWorkflow extends Cloudflare.Workflow<HourlyWorkflow>()(
+  "HourlyWorkflow",
+  { schedules: ["0 * * * *"] },
+  Effect.gen(function* () {
+    return Effect.fn(function* () {
+      // ...
+    });
+  }),
+) {}
+```
+
+Cloudflare evaluates schedules in UTC. Pass `schedules: []` to remove every
+schedule.
+
+Alchemy records schedules during local development, but its local Workflow
+simulator does not fire them automatically. Deploy to Cloudflare to test the
+trigger itself.
 
 ## Run steps with task
 
@@ -258,9 +283,11 @@ export const Worker = Cloudflare.Worker("Worker", {
 });
 ```
 
-Add `scriptName` to bind a workflow hosted by another Worker script
-— bindings only, so deploy the host first. The full async-handler
-example lives in the API reference.
+Add `schedules` to this Workflow reference to start instances on native cron
+schedules. Add `scriptName` to bind a workflow hosted by another Worker script
+— bindings only, so deploy the host first. Cross-script references cannot
+declare schedules; the Worker that defines the Workflow owns them. The full
+async-handler example lives in the API reference.
 
 ## Where next
 
@@ -275,8 +302,8 @@ Related:
   workflows call into.
 - [Queues](/cloudflare/messaging/queues) — when buffered messages are enough
   (no checkpointed steps).
-- [Cron triggers](/cloudflare/messaging/cron) — trigger workflows on a
-  schedule.
+- [Cron triggers](/cloudflare/messaging/cron) — run a Worker's `scheduled`
+  handler.
 
 Reference:
 

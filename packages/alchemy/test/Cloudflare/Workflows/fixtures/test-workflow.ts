@@ -7,9 +7,13 @@ import * as Effect from "effect/Effect";
  * Minimal durable body: one named `task`, a short `sleep`, and event
  * metadata in the result — enough to prove the workflow engine (local
  * workerd emulation or real Cloudflare) actually ran the instance.
+ *
+ * Declares a schedule (Feb 29 — effectively never fires) to exercise the
+ * Effect-native `(name, props, impl)` form through both providers.
  */
 export default class LocalTestWorkflow extends Cloudflare.Workflow<LocalTestWorkflow>()(
   "LocalTestWorkflow",
+  { schedules: ["0 0 29 2 *"] },
   Effect.gen(function* () {
     return Effect.fn(function* (input: { value: string }) {
       const event = yield* Cloudflare.Workflows.WorkflowEvent;
