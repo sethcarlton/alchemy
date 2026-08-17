@@ -26,7 +26,7 @@ import {
   migrationsAttrs,
   migrationsInputOf,
   stampedOf,
-  type MigrationsInput,
+  type PostgresMigrationsInput,
 } from "../SQL/Migrations/index.ts";
 import { hashImports, hashMigrations, readSqlFile } from "../SQL/SqlFile.ts";
 import { recordsEqual } from "../Util/equal.ts";
@@ -108,15 +108,15 @@ export type ProjectProps = {
   /**
    * SQL migrations to apply against the default branch's primary database.
    * Accepts a directory path, a `Drizzle.Schema` resource, or
-   * `{ dir, table? }`.
+   * `{ dir, table?, schema? }`.
    *
-   * Bookkeeping always lives in Alchemy's `__alchemy_migrations` table. A
+   * Bookkeeping defaults to `alchemy.__alchemy_migrations`. A
    * database previously migrated by drizzle-kit or Prisma is adopted by a
    * one-way conversion on first deploy: the old tool's applied history is
    * copied into Alchemy's table and the old table is left frozen. No
    * baselining required.
    */
-  migrations?: MigrationsInput;
+  migrations?: PostgresMigrationsInput;
   /**
    * Paths to additional `.sql` files to apply after migrations. Each file
    * is hashed; only files whose contents change are re-applied on
@@ -157,6 +157,7 @@ export type Project = Resource<
     enableLogicalReplication: boolean;
     migrationsDir: string | undefined;
     migrationsTable: string | undefined;
+    migrationsSchema: string | undefined;
     migrationsHashes: Record<string, string>;
     importHashes: Record<string, string>;
   },
@@ -265,7 +266,7 @@ export const ProjectProvider = () =>
       ) {
         return { action: "update" } as const;
       }
-      if (yield* diffMigrations({ news, output })) {
+      if (yield* diffMigrations({ news, output, dialect: "postgres" })) {
         return { action: "update" } as const;
       }
       if (news.importFiles?.length) {
@@ -296,10 +297,12 @@ export const ProjectProvider = () =>
       const matches = yield* findProjectByName(name);
       const match = matches[0];
       if (!match) return undefined;
+      const migrations = olds && migrationsInputOf(olds);
       return yield* hydrateProjectAttributes(match, {
         defaultBranchName: olds?.defaultBranchName,
-        migrationsDir: (olds && migrationsInputOf(olds))?.dir,
-        migrationsTable: (olds && migrationsInputOf(olds))?.table,
+        migrationsDir: migrations?.dir,
+        migrationsTable: migrations?.table,
+        migrationsSchema: migrations?.schema,
       });
     }),
     reconcile: Effect.fn(function* ({ id, news = {}, output }) {
@@ -414,7 +417,11 @@ export const ProjectProvider = () =>
 
       return {
         ...projectInfo,
-        ...migrationsAttrs({ input: migrationsInput, run: migrations, output }),
+        ...migrationsAttrs({
+          input: migrationsInput,
+          run: migrations,
+          output,
+        }),
         importHashes,
       };
     }),
@@ -632,6 +639,7 @@ const hydrateProjectAttributes = (
     defaultBranchName?: string;
     migrationsDir?: string;
     migrationsTable?: string;
+    migrationsSchema?: string;
   } = {},
 ) =>
   Effect.gen(function* () {
@@ -672,6 +680,7 @@ const hydrateProjectAttributes = (
         project.settings?.enable_logical_replication === true,
       migrationsDir: opts.migrationsDir,
       migrationsTable: opts.migrationsTable,
+      migrationsSchema: opts.migrationsSchema,
       migrationsHashes: {},
       importHashes: {},
     } satisfies ProjectAttributes;

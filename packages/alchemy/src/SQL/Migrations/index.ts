@@ -37,6 +37,7 @@ export {
   type MigrationRun,
   type MigrationsInput,
   type NormalizedMigrationsInput,
+  type PostgresMigrationsInput,
   type ResolvedMigrations,
   type StampedMigrationsState,
 } from "./Registry.ts";

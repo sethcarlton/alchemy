@@ -146,8 +146,8 @@ test.provider("list enumerates the deployed project", (stack) =>
 /**
  * Adopting a drizzle-kit-migrated Postgres database: drizzle's table lives
  * schema-qualified at `drizzle.__drizzle_migrations` on pg. The first
- * deploy with migrations converts that history into the public
- * `__alchemy_migrations` (hashes carried verbatim) and freezes drizzle's
+ * deploy with migrations converts that history into
+ * `alchemy.__alchemy_migrations` (hashes carried verbatim) and freezes drizzle's
  * table. This is the only place the schema-qualified source read and the
  * pg-dialect conversion DDL execute against a real Postgres.
  */
@@ -213,12 +213,13 @@ test.provider(
       );
       expect(project.projectId).toEqual(seeded.projectId);
       expect(project.migrationsTable).toEqual("__alchemy_migrations");
+      expect(project.migrationsSchema).toEqual("alchemy");
 
       // History converted (hash verbatim), only the pending migration ran
       // (a replay of init's bare CREATE TABLE would fail).
       const applied = yield* withPgClient(connectionUri, (client) =>
         makePgMigrationExecutor(client).query(
-          "SELECT name, hash FROM __alchemy_migrations ORDER BY id;",
+          "SELECT name, hash FROM alchemy.__alchemy_migrations ORDER BY id;",
         ),
       );
       expect(applied.map((r) => r.name)).toEqual([
@@ -266,7 +267,7 @@ test.provider(
       const { project, branch } = yield* stack.deploy(
         Effect.gen(function* () {
           const project = yield* Neon.Project("MigrationProject", {
-            migrations: migrationsDir,
+            migrations: { dir: migrationsDir, schema: "internal" },
             importFiles: [seedPath],
           });
           const branch = yield* Neon.Branch("FeatureBranch", {
@@ -279,10 +280,19 @@ test.provider(
       // Fresh deploys use Alchemy's one table; legacy rows that persisted
       // neon_migrations keep converging against it via state.
       expect(project.migrationsTable).toEqual("__alchemy_migrations");
+      expect(project.migrationsSchema).toEqual("internal");
       expect(Object.keys(project.migrationsHashes).sort()).toEqual([
         "0001_users.sql",
       ]);
       expect(project.importHashes[seedPath]).toBeDefined();
+      const applied = yield* withPgClient(
+        Redacted.make(project.connectionUri),
+        (client) =>
+          makePgMigrationExecutor(client).query(
+            "SELECT name FROM internal.__alchemy_migrations;",
+          ),
+      );
+      expect(applied.map((row) => row.name)).toEqual(["0001_users.sql"]);
 
       expect(branch.projectId).toEqual(project.projectId);
       expect(branch.parentBranchId).toEqual(project.defaultBranchId);

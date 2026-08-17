@@ -106,6 +106,7 @@ export interface BaseBranchAttributes {
   migrationsDir: string | undefined;
   /** Table used to track applied migrations, if configured. */
   migrationsTable: string | undefined;
+  migrationsSchema?: string;
   /** Content hashes for the last applied migration files. */
   migrationsHashes: Record<string, string>;
   /** Content hashes for the last applied import files. */
@@ -198,8 +199,9 @@ export const makeBranchProvider = <R extends ResourceLike>(opts: {
   expectedKind: "mysql" | "postgresql";
   engineLabel: string;
   runners: BranchMigrationRunners;
-}) =>
-  Provider.succeed(opts.resource, {
+}) => {
+  const dialect = opts.expectedKind === "postgresql" ? "postgres" : "mysql";
+  return Provider.succeed(opts.resource, {
     stables: ["organization", "database"],
 
     // PARENT FAN-OUT: PlanetScale branches are nested under a database within
@@ -243,6 +245,7 @@ export const makeBranchProvider = <R extends ResourceLike>(opts: {
                           region: { slug: branch.region.slug },
                           migrationsDir: undefined,
                           migrationsTable: undefined,
+                          migrationsSchema: undefined,
                           migrationsHashes: {},
                           importHashes: {},
                           desiredReplicas: undefined,
@@ -255,7 +258,7 @@ export const makeBranchProvider = <R extends ResourceLike>(opts: {
               // A database can be deleted between enumeration and the
               // per-database branch list — skip it rather than fail.
               Effect.catchTag("NotFound", () =>
-                Effect.succeed([] as BaseBranchAttributes[]),
+                Effect.succeed<BaseBranchAttributes[]>([]),
               ),
             ),
         { concurrency: 10 },
@@ -328,7 +331,7 @@ export const makeBranchProvider = <R extends ResourceLike>(opts: {
         }
       }
 
-      if (yield* diffMigrations({ news, output })) {
+      if (yield* diffMigrations({ news, output, dialect })) {
         return { action: "update", stables } as const;
       }
       if (news.importFiles?.length) {
@@ -369,6 +372,7 @@ export const makeBranchProvider = <R extends ResourceLike>(opts: {
       const databaseName = output?.database ?? dbInfo.name;
       const branchName =
         output?.name ?? (yield* createBranchName(id, olds.name));
+      const migrations = olds && migrationsInputOf(olds);
 
       return yield* planetscale
         .getBranch({
@@ -388,8 +392,9 @@ export const makeBranchProvider = <R extends ResourceLike>(opts: {
               updatedAt: data.updated_at,
               htmlUrl: data.html_url,
               region: { slug: data.region.slug },
-              migrationsDir: output?.migrationsDir ?? olds?.migrationsDir,
-              migrationsTable: output?.migrationsTable ?? olds?.migrationsTable,
+              migrationsDir: output?.migrationsDir ?? migrations?.dir,
+              migrationsTable: output?.migrationsTable ?? migrations?.table,
+              migrationsSchema: output?.migrationsSchema ?? migrations?.schema,
               migrationsHashes: output?.migrationsHashes ?? {},
               importHashes: output?.importHashes ?? {},
               desiredReplicas:
@@ -648,7 +653,11 @@ export const makeBranchProvider = <R extends ResourceLike>(opts: {
         updatedAt: updated.updated_at,
         htmlUrl: updated.html_url,
         region: { slug: updated.region.slug },
-        ...migrationsAttrs({ input: migrationsInput, run: migrations, output }),
+        ...migrationsAttrs({
+          input: migrationsInput,
+          run: migrations,
+          output,
+        }),
         importHashes,
         desiredReplicas: news.replicas ?? output?.desiredReplicas,
         hasReplicas: updated.has_replicas,
@@ -679,3 +688,4 @@ export const makeBranchProvider = <R extends ResourceLike>(opts: {
         );
     }),
   } as any);
+};

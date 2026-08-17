@@ -3,11 +3,16 @@ import type * as FileSystem from "effect/FileSystem";
 import type * as Path from "effect/Path";
 import { hashMigrations } from "../SqlFile.ts";
 import { recordsEqual } from "../../Util/equal.ts";
-import { ALCHEMY_DEFAULT_TABLE, applyAlchemyFormat } from "./AlchemyFormat.ts";
+import {
+  ALCHEMY_DEFAULT_SCHEMA,
+  ALCHEMY_DEFAULT_TABLE,
+  applyAlchemyFormat,
+} from "./AlchemyFormat.ts";
 import { detectLayout } from "./Detect.ts";
 import {
   MigrationError,
   type DrizzleV0LayoutError,
+  type MigrationDialect,
   type MigrationHistoryConflictError,
   type SqlExecutor,
 } from "./Format.ts";
@@ -27,26 +32,34 @@ import { readDrizzleDirRecords, readFlatRecords } from "./Records.ts";
  * (never written, never dropped). From then on Alchemy's table is the only
  * bookkeeping.
  */
-export type MigrationsInput =
+export type MigrationsInput<Schema = never> =
   | string
   | {
       /** Directory containing the migration files. */
       dir: string;
       /** Override the applied-migrations table name. */
       table?: string;
+      /**
+       * PostgreSQL schema for the migrations table.
+       * @default "alchemy"
+       */
+      schema?: Schema;
     }
   | {
       /** A `Drizzle.Schema`-shaped resource output. */
       out: string;
     };
 
+export type PostgresMigrationsInput = MigrationsInput<string>;
+
 export interface NormalizedMigrationsInput {
   dir: string;
   table?: string;
+  schema?: string;
 }
 
 export const normalizeMigrationsInput = (
-  input: MigrationsInput,
+  input: PostgresMigrationsInput,
 ): NormalizedMigrationsInput => {
   if (typeof input === "string") return { dir: input };
   if ("out" in input) return { dir: input.out };
@@ -58,7 +71,7 @@ export const normalizeMigrationsInput = (
  * Shared by every SQL database resource.
  */
 export const migrationsInputOf = (props: {
-  migrations?: MigrationsInput;
+  migrations?: PostgresMigrationsInput;
 }): NormalizedMigrationsInput | undefined =>
   props.migrations ? normalizeMigrationsInput(props.migrations) : undefined;
 
@@ -71,15 +84,25 @@ export const migrationsInputOf = (props: {
  */
 export interface StampedMigrationsState {
   table?: string | undefined;
+  schema?: string | undefined;
 }
 
 export const stampedOf = (
-  output: { migrationsTable: string | undefined } | undefined,
-): StampedMigrationsState => ({ table: output?.migrationsTable });
+  output:
+    | {
+        migrationsTable: string | undefined;
+        migrationsSchema?: string | undefined;
+      }
+    | undefined,
+): StampedMigrationsState => ({
+  table: output?.migrationsTable,
+  schema: output?.migrationsSchema,
+});
 
 export interface ResolvedMigrations {
   dir: string;
   table: string;
+  schema?: string;
 }
 
 /**
@@ -90,9 +113,17 @@ export interface ResolvedMigrations {
 export const resolveMigrations = (options: {
   input: NormalizedMigrationsInput;
   stamped: StampedMigrationsState;
+  dialect: MigrationDialect;
 }): ResolvedMigrations => ({
   dir: options.input.dir,
   table: options.input.table ?? options.stamped.table ?? ALCHEMY_DEFAULT_TABLE,
+  schema:
+    options.input.schema ??
+    (options.stamped.table === undefined
+      ? options.dialect === "postgres"
+        ? ALCHEMY_DEFAULT_SCHEMA
+        : undefined
+      : options.stamped.schema),
 });
 
 /**
@@ -119,6 +150,7 @@ export const applyMigrations = (options: {
     yield* applyAlchemyFormat({
       executor,
       table: resolved.table,
+      schema: resolved.schema,
       records,
     });
   });
@@ -151,6 +183,7 @@ export interface MigrationRun {
 export const runMigrations = <E, R>(options: {
   input: NormalizedMigrationsInput;
   stamped: StampedMigrationsState;
+  dialect: MigrationDialect;
   withExecutor: (
     apply: (
       executor: SqlExecutor,
@@ -182,10 +215,12 @@ export const runMigrations = <E, R>(options: {
  * action shape (`{ action: "update" }`, with or without stables).
  */
 export const diffMigrations = (options: {
-  news: { migrations?: MigrationsInput };
+  news: { migrations?: PostgresMigrationsInput };
+  dialect: MigrationDialect;
   output:
     | {
         migrationsTable: string | undefined;
+        migrationsSchema?: string | undefined;
         migrationsHashes: Record<string, string>;
       }
     | undefined;
@@ -200,9 +235,11 @@ export const diffMigrations = (options: {
     const resolved = resolveMigrations({
       input,
       stamped: stampedOf(options.output),
+      dialect: options.dialect,
     });
     return (
-      resolved.table !== (options.output?.migrationsTable ?? resolved.table)
+      resolved.table !== (options.output?.migrationsTable ?? resolved.table) ||
+      resolved.schema !== options.output?.migrationsSchema
     );
   });
 
@@ -218,17 +255,16 @@ export const migrationsAttrs = (options: {
   output:
     | {
         migrationsTable: string | undefined;
+        migrationsSchema?: string | undefined;
         migrationsHashes: Record<string, string>;
       }
     | undefined;
-}): {
-  migrationsDir: string | undefined;
-  migrationsTable: string | undefined;
-  migrationsHashes: Record<string, string>;
-} => ({
+}) => ({
   migrationsDir: options.input?.dir,
   migrationsTable:
     options.run?.resolved.table ?? options.output?.migrationsTable,
+  migrationsSchema:
+    options.run?.resolved.schema ?? options.output?.migrationsSchema,
   migrationsHashes:
     options.run?.hashes ?? options.output?.migrationsHashes ?? {},
 });

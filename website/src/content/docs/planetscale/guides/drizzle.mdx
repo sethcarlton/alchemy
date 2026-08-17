@@ -86,7 +86,7 @@ const branch = yield* Planetscale.PostgresBranch("app-branch", {
 Because the branch depends on `schema.out`, alchemy orders
 `Drizzle.Schema` first: it regenerates pending SQL, then the branch
 scans the directory and applies new files transactionally, recording
-each in the `__alchemy_migrations` tracking table. Details in
+each in the `alchemy.__alchemy_migrations` tracking table. Details in
 [Migrations](/planetscale/data/migrations).
 
 ## Connect via `origin` / `pooledOrigin`

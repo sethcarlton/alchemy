@@ -12,6 +12,7 @@ import {
   migrationsAttrs,
   migrationsInputOf,
   stampedOf,
+  type PostgresMigrationsInput,
 } from "../../SQL/Migrations/index.ts";
 import { recordsEqual } from "../../Util/equal.ts";
 import type { BaseDatabaseAttributes, BaseDatabaseProps } from "../Database.ts";
@@ -34,7 +35,16 @@ import {
 /**
  * Properties for creating or updating a PostgreSQL PlanetScale database.
  */
-export interface PostgresDatabaseProps extends BaseDatabaseProps {
+export interface PostgresDatabaseProps extends Omit<
+  BaseDatabaseProps,
+  "migrations"
+> {
+  /**
+   * SQL migrations to apply against the default branch. Postgres bookkeeping
+   * defaults to `alchemy.__alchemy_migrations`.
+   */
+  migrations?: PostgresMigrationsInput;
+
   /**
    * The PostgreSQL database cluster size. Required.
    * Short sizes are expanded using the target region and architecture.
@@ -59,6 +69,7 @@ export interface PostgresDatabaseProps extends BaseDatabaseProps {
  * Output attributes of a deployed PostgreSQL PlanetScale database.
  */
 export interface PostgresDatabaseAttributes extends BaseDatabaseAttributes {
+  migrationsSchema: string | undefined;
   /** PostgreSQL CPU architecture. */
   arch: "x86" | "arm";
 }
@@ -151,7 +162,7 @@ export const PostgresDatabaseProvider = () =>
         return { action: "replace" } as const;
       }
 
-      if (yield* diffMigrations({ news, output })) {
+      if (yield* diffMigrations({ news, output, dialect: "postgres" })) {
         return { action: "update", stables } as const;
       }
       if (news.importFiles?.length) {
@@ -214,6 +225,7 @@ export const PostgresDatabaseProvider = () =>
       const arch: "x86" | "arm" =
         branch!.cluster_architecture === "aarch64" ? "arm" : "x86";
       const clusterSize = branch!.cluster_name;
+      const migrations = olds && migrationsInputOf(olds);
 
       return {
         id: data.id,
@@ -226,10 +238,9 @@ export const PostgresDatabaseProvider = () =>
         updatedAt: data.updated_at,
         htmlUrl: data.html_url,
         region: { slug: data.region.slug },
-        migrationsDir:
-          output?.migrationsDir ?? (olds && migrationsInputOf(olds))?.dir,
-        migrationsTable:
-          output?.migrationsTable ?? (olds && migrationsInputOf(olds))?.table,
+        migrationsDir: output?.migrationsDir ?? migrations?.dir,
+        migrationsTable: output?.migrationsTable ?? migrations?.table,
+        migrationsSchema: output?.migrationsSchema ?? migrations?.schema,
         migrationsHashes: output?.migrationsHashes ?? {},
         importHashes: output?.importHashes ?? {},
         clusterSize,
@@ -383,7 +394,11 @@ export const PostgresDatabaseProvider = () =>
         htmlUrl: updated.html_url,
         region: { slug: updated.region.slug },
         clusterSize: clusterSize,
-        ...migrationsAttrs({ input: migrationsInput, run: migrations, output }),
+        ...migrationsAttrs({
+          input: migrationsInput,
+          run: migrations,
+          output,
+        }),
         importHashes,
         arch: news.arch ?? output?.arch ?? "x86",
         requireApprovalForDeploy: updated.require_approval_for_deploy ?? false,
@@ -449,6 +464,7 @@ export const PostgresDatabaseProvider = () =>
               clusterSize,
               migrationsDir: undefined,
               migrationsTable: undefined,
+              migrationsSchema: undefined,
               migrationsHashes: {},
               importHashes: {},
               arch,

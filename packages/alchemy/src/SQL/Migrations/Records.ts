@@ -174,3 +174,12 @@ export const quoteIdentifier = (
   dialect === "mysql"
     ? `\`${identifier.replaceAll("`", "``")}\``
     : `"${identifier.replaceAll('"', '""')}"`;
+
+export const qualifyTable = (
+  table: string,
+  dialect: MigrationDialect,
+  schema?: string,
+): string =>
+  schema
+    ? `${quoteIdentifier(schema, dialect)}.${quoteIdentifier(table, dialect)}`
+    : quoteIdentifier(table, dialect);

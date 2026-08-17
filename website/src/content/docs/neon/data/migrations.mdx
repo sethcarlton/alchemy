@@ -1,6 +1,6 @@
 ---
 title: Migrations
-description: Apply SQL migrations and seed data to Neon projects and branches as part of every deploy — ordered, hashed, and tracked in Alchemy's __alchemy_migrations table.
+description: Apply SQL migrations and seed data to Neon projects and branches as part of every deploy — ordered, hashed, and tracked in Alchemy's migration table.
 ---
 
 Both `Neon.Project` and `Neon.Branch` accept a `migrations` prop — a
@@ -40,11 +40,12 @@ entirely.
 
 ## The tracking table
 
-Applied migrations are recorded in Alchemy's `__alchemy_migrations`
-table (created automatically), one row per file:
+Applied migrations are recorded in
+`alchemy.__alchemy_migrations` (created automatically), one row per
+file:
 
 ```sql
-CREATE TABLE IF NOT EXISTS "__alchemy_migrations" (
+CREATE TABLE IF NOT EXISTS "alchemy"."__alchemy_migrations" (
   id SERIAL PRIMARY KEY,
   hash text NOT NULL,
   created_at bigint,
@@ -60,12 +61,16 @@ is frozen. Projects deployed by older Alchemy versions (which used a
 `neon_migrations` table) are upgraded in place.
 
 On each deploy, files whose names already appear in the table are
-skipped. Use `migrations: { dir, table }` to put the bookkeeping in
-a differently-named table:
+skipped. Use `migrations: { dir, table, schema }` to customize its
+name or schema:
 
 ```typescript
 const project = yield* Neon.Project("my-project", {
-  migrations: { dir: "./migrations", table: "my_migrations" },
+  migrations: {
+    dir: "./migrations",
+    table: "my_migrations",
+    schema: "internal",
+  },
 });
 ```
 

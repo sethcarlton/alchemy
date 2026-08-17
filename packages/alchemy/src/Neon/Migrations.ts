@@ -77,6 +77,7 @@ export const runPgMigrations = (options: {
 }) =>
   runMigrations({
     ...options,
+    dialect: "postgres",
     withExecutor: (apply) =>
       withPgClient(options.connectionUri, (client) =>
         apply(makePgMigrationExecutor(client)),

@@ -21,7 +21,7 @@ import {
   migrationsAttrs,
   migrationsInputOf,
   stampedOf,
-  type MigrationsInput,
+  type PostgresMigrationsInput,
 } from "../SQL/Migrations/index.ts";
 import { hashImports, hashMigrations, readSqlFile } from "../SQL/SqlFile.ts";
 import { recordsEqual } from "../Util/equal.ts";
@@ -97,15 +97,15 @@ export type BranchProps = {
   endpoints?: BranchEndpointConfig[];
   /**
    * SQL migrations to apply against the branch. Accepts a directory path, a
-   * `Drizzle.Schema` resource, or `{ dir, table? }`.
+   * `Drizzle.Schema` resource, or `{ dir, table?, schema? }`.
    *
-   * Bookkeeping always lives in Alchemy's `__alchemy_migrations` table. A
+   * Bookkeeping defaults to `alchemy.__alchemy_migrations`. A
    * database previously migrated by drizzle-kit or Prisma is adopted by a
    * one-way conversion on first deploy: the old tool's applied history is
    * copied into Alchemy's table and the old table is left frozen. No
    * baselining required.
    */
-  migrations?: MigrationsInput;
+  migrations?: PostgresMigrationsInput;
   /**
    * Paths to additional `.sql` files to apply after migrations.
    */
@@ -146,6 +146,7 @@ export type Branch = Resource<
     pooledOrigin: PostgresOrigin;
     migrationsDir: string | undefined;
     migrationsTable: string | undefined;
+    migrationsSchema: string | undefined;
     migrationsHashes: Record<string, string>;
     importHashes: Record<string, string>;
   },
@@ -256,7 +257,7 @@ export const BranchProvider = () =>
       ) {
         return { action: "update" } as const;
       }
-      if (yield* diffMigrations({ news, output })) {
+      if (yield* diffMigrations({ news, output, dialect: "postgres" })) {
         return { action: "update" } as const;
       }
       if (news.importFiles?.length) {
@@ -309,6 +310,7 @@ export const BranchProvider = () =>
         db.name,
         db.owner_name,
       );
+      const migrations = olds && migrationsInputOf(olds);
       return {
         branchId: match.id,
         branchName: match.name,
@@ -329,8 +331,9 @@ export const BranchProvider = () =>
         pooledConnectionUri: conn.pooled,
         origin: parsePostgresOrigin(conn.uri),
         pooledOrigin: parsePostgresOrigin(conn.pooled),
-        migrationsDir: (olds && migrationsInputOf(olds))?.dir,
-        migrationsTable: (olds && migrationsInputOf(olds))?.table,
+        migrationsDir: migrations?.dir,
+        migrationsTable: migrations?.table,
+        migrationsSchema: migrations?.schema,
         migrationsHashes: {},
         importHashes: {},
       };
@@ -454,7 +457,11 @@ export const BranchProvider = () =>
 
       return {
         ...branchInfo,
-        ...migrationsAttrs({ input: migrationsInput, run: migrations, output }),
+        ...migrationsAttrs({
+          input: migrationsInput,
+          run: migrations,
+          output,
+        }),
         importHashes,
       };
     }),
@@ -568,6 +575,7 @@ const hydrateBranch = (
       pooledOrigin: parsePostgresOrigin(conn.pooled),
       migrationsDir: undefined,
       migrationsTable: undefined,
+      migrationsSchema: undefined,
       migrationsHashes: {},
       importHashes: {},
     };

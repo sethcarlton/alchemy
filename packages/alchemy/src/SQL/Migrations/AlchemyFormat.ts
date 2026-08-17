@@ -13,8 +13,9 @@ import {
   type SqlExecutor,
 } from "./Format.ts";
 import { classifyTable, tableColumns } from "./Introspect.ts";
-import { quoteIdentifier, sqlLiteral } from "./Records.ts";
+import { qualifyTable, quoteIdentifier, sqlLiteral } from "./Records.ts";
 
+export const ALCHEMY_DEFAULT_SCHEMA = "alchemy";
 export const ALCHEMY_DEFAULT_TABLE = "__alchemy_migrations";
 
 /**
@@ -25,8 +26,12 @@ export const ALCHEMY_DEFAULT_TABLE = "__alchemy_migrations";
  * format Alchemy ever writes. Migrating from drizzle/prisma/wrangler
  * bookkeeping is a one-way conversion performed once (see `Convert.ts`).
  */
-const createTableSql = (table: string, dialect: MigrationDialect): string => {
-  const quoted = quoteIdentifier(table, dialect);
+const createTableSql = (
+  table: string,
+  dialect: MigrationDialect,
+  schema?: string,
+): string => {
+  const quoted = qualifyTable(table, dialect, schema);
   switch (dialect) {
     case "sqlite":
       return `CREATE TABLE IF NOT EXISTS ${quoted} (
@@ -59,8 +64,9 @@ const insertSql = (
   table: string,
   dialect: MigrationDialect,
   record: Pick<MigrationRecord, "name" | "hash" | "createdAtMillis">,
+  schema?: string,
 ): string => {
-  const quoted = quoteIdentifier(table, dialect);
+  const quoted = qualifyTable(table, dialect, schema);
   const applied = dialect === "sqlite" ? ", datetime('now')" : "";
   const appliedColumn = dialect === "sqlite" ? ", applied_at" : "";
   return `INSERT INTO ${quoted} (hash, created_at, name${appliedColumn}) VALUES (${sqlLiteral(record.hash)}, ${sqlLiteral(record.createdAtMillis ?? null)}, ${sqlLiteral(record.name)}${applied});`;
@@ -70,10 +76,11 @@ const renameSql = (
   from: string,
   to: string,
   dialect: MigrationDialect,
+  schema?: string,
 ): string =>
   dialect === "mysql"
-    ? `RENAME TABLE ${quoteIdentifier(from, dialect)} TO ${quoteIdentifier(to, dialect)};`
-    : `ALTER TABLE ${quoteIdentifier(from, dialect)} RENAME TO ${quoteIdentifier(to, dialect)};`;
+    ? `RENAME TABLE ${qualifyTable(from, dialect, schema)} TO ${quoteIdentifier(to, dialect)};`
+    : `ALTER TABLE ${qualifyTable(from, dialect, schema)} RENAME TO ${quoteIdentifier(to, dialect)};`;
 
 /**
  * Rebuild an in-place table (legacy Alchemy 3-column / oldest 2-column /
@@ -89,11 +96,12 @@ const rebuildInPlace = (options: {
   /** SQL expression yielding the migration name from the old table. */
   nameExpr: string;
   tool: "legacy-alchemy" | "wrangler";
+  schema?: string;
 }) =>
   Effect.gen(function* () {
-    const { executor, table, records, nameExpr } = options;
+    const { executor, table, records, nameExpr, schema } = options;
     const dialect = executor.dialect;
-    const quoted = quoteIdentifier(table, dialect);
+    const quoted = qualifyTable(table, dialect, schema);
     const rows = yield* executor.query(
       `SELECT ${nameExpr} AS name, applied_at FROM ${quoted} ORDER BY id;`,
     );
@@ -115,14 +123,16 @@ const rebuildInPlace = (options: {
 
     const temp = `${table}_alchemy_upgrade`;
     yield* executor.batch([
-      `DROP TABLE IF EXISTS ${quoteIdentifier(temp, dialect)};`,
-      createTableSql(temp, dialect).replace(
+      `DROP TABLE IF EXISTS ${qualifyTable(temp, dialect, schema)};`,
+      createTableSql(temp, dialect, schema).replace(
         "CREATE TABLE IF NOT EXISTS",
         "CREATE TABLE",
       ),
-      ...matched.map((row) => convertedRowInsertSql(temp, dialect, row)),
+      ...matched.map((row) =>
+        convertedRowInsertSql(temp, dialect, row, schema),
+      ),
       `DROP TABLE ${quoted};`,
-      renameSql(temp, table, dialect),
+      renameSql(temp, table, dialect, schema),
     ]);
   });
 
@@ -130,23 +140,29 @@ const ensureTable = (options: {
   executor: SqlExecutor;
   table: string;
   records: ReadonlyArray<MigrationRecord>;
+  schema?: string;
 }) =>
   Effect.gen(function* () {
-    const { executor, table, records } = options;
-    const shape = classifyTable(yield* tableColumns(executor, table));
+    const { executor, table, records, schema } = options;
+    if (schema && executor.dialect === "postgres") {
+      yield* executor.batch([
+        `CREATE SCHEMA IF NOT EXISTS ${quoteIdentifier(schema, executor.dialect)};`,
+      ]);
+    }
+    const shape = classifyTable(yield* tableColumns(executor, table, schema));
     switch (shape) {
       case "absent": {
         // Greenfield for us — but possibly not for the database. Adopt any
         // history the previous tool (drizzle-kit / prisma / wrangler) left
         // behind: copy it into our table ONCE and freeze theirs. One-way.
-        const history = yield* findForeignHistory({ executor, table });
+        const history = yield* findForeignHistory({ executor, table, schema });
         const converted = history
           ? yield* matchForeignRows({ history, records })
           : [];
         yield* executor.batch([
-          createTableSql(table, executor.dialect),
+          createTableSql(table, executor.dialect, schema),
           ...converted.map((row) =>
-            convertedRowInsertSql(table, executor.dialect, row),
+            convertedRowInsertSql(table, executor.dialect, row, schema),
           ),
         ]);
         return;
@@ -163,6 +179,7 @@ const ensureTable = (options: {
           records,
           nameExpr: "name",
           tool: "legacy-alchemy",
+          schema,
         });
         return;
       case "legacy-2col":
@@ -172,6 +189,7 @@ const ensureTable = (options: {
           records,
           nameExpr: "id",
           tool: "legacy-alchemy",
+          schema,
         });
         return;
       case "wrangler":
@@ -184,6 +202,7 @@ const ensureTable = (options: {
           records,
           nameExpr: "name",
           tool: "wrangler",
+          schema,
         });
         return;
       case "unknown":
@@ -195,9 +214,9 @@ const ensureTable = (options: {
     }
   });
 
-const appliedNames = (executor: SqlExecutor, table: string) =>
+const appliedNames = (executor: SqlExecutor, table: string, schema?: string) =>
   executor
-    .query(`SELECT name FROM ${quoteIdentifier(table, executor.dialect)};`)
+    .query(`SELECT name FROM ${qualifyTable(table, executor.dialect, schema)};`)
     .pipe(
       Effect.map(
         (rows) =>
@@ -224,12 +243,13 @@ export const applyAlchemyFormat = (options: {
   executor: SqlExecutor;
   table: string;
   records: ReadonlyArray<MigrationRecord>;
+  schema?: string;
 }): Effect.Effect<void, MigrationError | MigrationHistoryConflictError> =>
   Effect.gen(function* () {
-    const { executor, table, records } = options;
+    const { executor, table, records, schema } = options;
     if (records.length === 0) return;
-    yield* ensureTable({ executor, table, records });
-    const applied = yield* appliedNames(executor, table);
+    yield* ensureTable({ executor, table, records, schema });
+    const applied = yield* appliedNames(executor, table, schema);
     for (const record of records) {
       if (
         applied.has(record.name) ||
@@ -240,7 +260,7 @@ export const applyAlchemyFormat = (options: {
       }
       yield* executor.batch([
         ...record.statements,
-        insertSql(table, executor.dialect, record),
+        insertSql(table, executor.dialect, record, schema),
       ]);
     }
   });

@@ -165,7 +165,7 @@ union, and the migrator can fail with `MigratorInitError`.
 Already ran `drizzle-kit migrate` against the database before
 Alchemy? No baselining needed: on the first deploy Alchemy copies
 the applied history out of `__drizzle_migrations` (the `drizzle`
-schema on Postgres) into its own `__alchemy_migrations` table —
+schema on Postgres) into its own `alchemy.__alchemy_migrations` table —
 hashes carry over verbatim, since both record sha256 of
 `migration.sql` — and only genuinely pending migrations run. The
 drizzle table is left frozen, never written or dropped.

@@ -49,6 +49,7 @@ export const runMySQLMigrations = (
   runMigrations({
     input,
     stamped,
+    dialect: "mysql",
     withExecutor: (apply) =>
       withMySQLConnection(target, (connection) =>
         apply(makeMySQLMigrationExecutor(connection)),

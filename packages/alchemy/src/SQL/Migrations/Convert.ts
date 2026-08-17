@@ -7,6 +7,7 @@ import {
 } from "./Format.ts";
 import { classifyTable, tableColumns } from "./Introspect.ts";
 import {
+  qualifyTable,
   quoteIdentifier,
   sqlLiteral,
   timestampPrefixMillis,
@@ -44,15 +45,6 @@ export const toTimestampString = (value: unknown): string | undefined =>
       ? value.toISOString()
       : String(value);
 
-const qualify = (
-  table: string,
-  dialect: SqlExecutor["dialect"],
-  schema?: string,
-) =>
-  schema
-    ? `${quoteIdentifier(schema, dialect)}.${quoteIdentifier(table, dialect)}`
-    : quoteIdentifier(table, dialect);
-
 /**
  * Discover applied-migration history left behind by the tool a user is
  * migrating FROM — drizzle-kit, Prisma, or wrangler — so it can be copied
@@ -75,14 +67,15 @@ export const findForeignHistory = (options: {
   executor: SqlExecutor;
   /** The resolved Alchemy table — a source with this name is not foreign. */
   table: string;
+  schema?: string;
 }): Effect.Effect<ForeignHistory | undefined, MigrationError> =>
   Effect.gen(function* () {
-    const { executor, table } = options;
+    const { executor, table, schema } = options;
     const dialect = executor.dialect;
 
     // drizzle
     const drizzleSchema = dialect === "postgres" ? "drizzle" : undefined;
-    if (table !== "__drizzle_migrations") {
+    if (table !== "__drizzle_migrations" || schema !== drizzleSchema) {
       const columns = yield* tableColumns(
         executor,
         "__drizzle_migrations",
@@ -90,7 +83,7 @@ export const findForeignHistory = (options: {
       );
       if (classifyTable(columns) === "drizzle-shaped") {
         const rows = yield* executor.query(
-          `SELECT hash, created_at, name, applied_at FROM ${qualify("__drizzle_migrations", dialect, drizzleSchema)} ORDER BY id;`,
+          `SELECT hash, created_at, name, applied_at FROM ${qualifyTable("__drizzle_migrations", dialect, drizzleSchema)} ORDER BY id;`,
         );
         return {
           tool: "drizzle" as const,
@@ -116,7 +109,7 @@ export const findForeignHistory = (options: {
     }
 
     // prisma
-    if (table !== "_prisma_migrations") {
+    if (table !== "_prisma_migrations" || schema !== undefined) {
       const columns = yield* tableColumns(executor, "_prisma_migrations");
       const names = new Set(columns.map((c) => c.name));
       if (names.has("migration_name") && names.has("checksum")) {
@@ -252,5 +245,6 @@ export const convertedRowInsertSql = (
   table: string,
   dialect: SqlExecutor["dialect"],
   row: ConvertedRow,
+  schema?: string,
 ): string =>
-  `INSERT INTO ${quoteIdentifier(table, dialect)} (hash, created_at, name, applied_at) VALUES (${sqlLiteral(row.hash ?? "")}, ${sqlLiteral(row.createdAtMillis ?? null)}, ${sqlLiteral(row.name)}, ${sqlLiteral(row.appliedAt ?? null)});`;
+  `INSERT INTO ${qualifyTable(table, dialect, schema)} (hash, created_at, name, applied_at) VALUES (${sqlLiteral(row.hash ?? "")}, ${sqlLiteral(row.createdAtMillis ?? null)}, ${sqlLiteral(row.name)}, ${sqlLiteral(row.appliedAt ?? null)});`;

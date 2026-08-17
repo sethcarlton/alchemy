@@ -218,7 +218,7 @@ export const MySQLDatabaseProvider = () =>
       ) {
         return { action: "update", stables } as const;
       }
-      if (yield* diffMigrations({ news, output })) {
+      if (yield* diffMigrations({ news, output, dialect: "mysql" })) {
         return { action: "update", stables } as const;
       }
       if (news.importFiles?.length) {
@@ -457,7 +457,11 @@ export const MySQLDatabaseProvider = () =>
         region: { slug: updated.region.slug },
         clusterSize,
         replicas: keyspace.replicas,
-        ...migrationsAttrs({ input: migrationsInput, run: migrations, output }),
+        ...migrationsAttrs({
+          input: migrationsInput,
+          run: migrations,
+          output,
+        }),
         importHashes,
         requireApprovalForDeploy: updated.require_approval_for_deploy ?? false,
         restrictBranchRegion: updated.restrict_branch_region ?? false,

@@ -41,7 +41,7 @@ const featureBranch = yield* Neon.Branch("feature", {
 ```
 
 Migrations are ordered, hashed, and tracked in Alchemy's
-`__alchemy_migrations` table so each file runs exactly once — see
+`alchemy.__alchemy_migrations` table so each file runs exactly once — see
 [Migrations](/neon/data/migrations).
 
 ## Pooled vs direct

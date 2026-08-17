@@ -308,7 +308,7 @@ export const ProviderLive = () =>
         return { action: "update" } as const;
       }
       // Detect migration/import file drift.
-      if (yield* diffMigrations({ news, output })) {
+      if (yield* diffMigrations({ news, output, dialect: "sqlite" })) {
         return { action: "update" } as const;
       }
       if (news.importFiles?.length) {
@@ -519,6 +519,7 @@ export const ProviderLive = () =>
         ? yield* runMigrations({
             input: migrationsInput,
             stamped: stampedOf(output),
+            dialect: "sqlite",
             withExecutor: (apply) =>
               Effect.gen(function* () {
                 const queryDb = yield* d1.queryDatabase;
@@ -613,7 +614,7 @@ export const ProviderLocal = () =>
           }
           // Detect migration/import file drift — same rules as the live
           // provider.
-          if (yield* diffMigrations({ news, output })) {
+          if (yield* diffMigrations({ news, output, dialect: "sqlite" })) {
             return { action: "update" } as const;
           }
           if (news.importFiles?.length) {
@@ -643,6 +644,7 @@ export const ProviderLocal = () =>
             ? yield* runMigrations({
                 input: migrationsInput,
                 stamped: stampedOf(output),
+                dialect: "sqlite",
                 withExecutor: (apply) =>
                   withLocalD1Executor(databaseId, (executor) =>
                     apply(makeD1MigrationExecutor(executor)),

@@ -1,4 +1,5 @@
 import { Resource } from "../../Resource.ts";
+import type { PostgresMigrationsInput } from "../../SQL/Migrations/index.ts";
 import {
   type BaseBranchAttributes,
   type BaseBranchProps,
@@ -15,7 +16,16 @@ import {
 /**
  * Properties for creating or updating a {@link PostgresBranch}.
  */
-export interface PostgresBranchProps extends BaseBranchProps {
+export interface PostgresBranchProps extends Omit<
+  BaseBranchProps,
+  "migrations"
+> {
+  /**
+   * SQL migrations to apply against this branch. Postgres bookkeeping
+   * defaults to `alchemy.__alchemy_migrations`.
+   */
+  migrations?: PostgresMigrationsInput;
+
   /**
    * The Postgres database. Either a string database name or a
    * {@link PostgresDatabase} resource.

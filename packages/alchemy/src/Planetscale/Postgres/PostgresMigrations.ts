@@ -49,6 +49,7 @@ export const runPostgresMigrations = (
   runMigrations({
     input,
     stamped,
+    dialect: "postgres",
     withExecutor: (apply) =>
       withPostgresClient(target, (client) =>
         apply(makePgMigrationExecutor(client)),

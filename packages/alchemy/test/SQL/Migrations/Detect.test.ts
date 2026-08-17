@@ -1,5 +1,6 @@
 import {
   detectLayout,
+  diffMigrations,
   inlineSqlParams,
   normalizeMigrationsInput,
   readDrizzleDirRecords,
@@ -8,6 +9,7 @@ import {
   timestampPrefixMillis,
 } from "@/SQL/Migrations/index.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { hashMigrations } from "@/SQL/SqlFile.ts";
 import { describe as plainDescribe, expect, layer, test } from "alchemy-test";
 import * as Effect from "effect/Effect";
 import * as Result from "effect/Result";
@@ -84,9 +86,29 @@ describe("readers", (it) => {
 
 plainDescribe("resolveMigrations", () => {
   test("defaults to __alchemy_migrations", () => {
-    expect(resolveMigrations({ input: { dir: "./m" }, stamped: {} })).toEqual({
+    expect(
+      resolveMigrations({
+        input: { dir: "./m" },
+        stamped: {},
+        dialect: "sqlite",
+      }),
+    ).toEqual({
       dir: "./m",
       table: "__alchemy_migrations",
+    });
+  });
+
+  test("a first Postgres deploy defaults to the alchemy schema", () => {
+    expect(
+      resolveMigrations({
+        input: { dir: "./m" },
+        stamped: {},
+        dialect: "postgres",
+      }),
+    ).toEqual({
+      dir: "./m",
+      table: "__alchemy_migrations",
+      schema: "alchemy",
     });
   });
 
@@ -98,17 +120,23 @@ plainDescribe("resolveMigrations", () => {
       resolveMigrations({
         input: { dir: "./m" },
         stamped: { table: "neon_migrations" },
+        dialect: "sqlite",
       }).table,
     ).toBe("neon_migrations");
   });
 
-  test("an explicit table always wins", () => {
+  test("a stamped unqualified table is not moved into the default schema", () => {
     expect(
       resolveMigrations({
-        input: { dir: "./m", table: "my_migrations" },
-        stamped: { table: "d1_migrations" },
-      }).table,
-    ).toBe("my_migrations");
+        input: { dir: "./m" },
+        stamped: { table: "neon_migrations" },
+        dialect: "postgres",
+      }),
+    ).toEqual({
+      dir: "./m",
+      table: "neon_migrations",
+      schema: undefined,
+    });
   });
 });
 
@@ -129,6 +157,44 @@ plainDescribe("normalizeMigrationsInput", () => {
       table: "t",
     });
   });
+});
+
+describe("diffMigrations", (it) => {
+  it.effect("detects a Postgres schema change", () =>
+    Effect.gen(function* () {
+      const dir = fixture("flat");
+      const migrationsHashes = yield* hashMigrations(dir);
+      expect(
+        yield* diffMigrations({
+          news: { migrations: { dir, schema: "internal" } },
+          dialect: "postgres",
+          output: {
+            migrationsTable: "__alchemy_migrations",
+            migrationsSchema: "alchemy",
+            migrationsHashes,
+          },
+        }),
+      ).toBe(true);
+    }),
+  );
+
+  it.effect("a pre-schema Postgres row does not diff", () =>
+    Effect.gen(function* () {
+      const dir = fixture("flat");
+      const migrationsHashes = yield* hashMigrations(dir);
+      expect(
+        yield* diffMigrations({
+          news: { migrations: dir },
+          dialect: "postgres",
+          output: {
+            migrationsTable: "neon_migrations",
+            migrationsSchema: undefined,
+            migrationsHashes,
+          },
+        }),
+      ).toBe(false);
+    }),
+  );
 });
 
 plainDescribe("helpers", () => {

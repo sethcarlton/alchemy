@@ -51,7 +51,8 @@ PlanetScale databases and branches.
 ## The tracking table
 
 Applied migrations are recorded in one Alchemy-owned table,
-`__alchemy_migrations`, on every database:
+`__alchemy_migrations`. Postgres stores it in the `alchemy` schema;
+D1 and MySQL use their default namespace:
 
 ```sql
 CREATE TABLE IF NOT EXISTS "__alchemy_migrations" (
@@ -78,6 +79,17 @@ const db = yield* Cloudflare.D1.Database("app-db", {
 });
 ```
 
+Postgres also accepts a custom schema:
+
+```typescript
+const db = yield* Neon.Project("app-db", {
+  migrations: {
+    dir: "./migrations",
+    schema: "internal",
+  },
+});
+```
+
 ## Adopting an existing database
 
 A database previously migrated with **drizzle-kit**, **Prisma**, or
@@ -85,7 +97,8 @@ A database previously migrated with **drizzle-kit**, **Prisma**, or
 the old tool's tracking table — `__drizzle_migrations` (in the
 `drizzle` schema on Postgres), `_prisma_migrations`, or
 `d1_migrations` — copies its applied history into
-`__alchemy_migrations` once, and leaves the old table **frozen**:
+`alchemy.__alchemy_migrations` on Postgres or `__alchemy_migrations`
+elsewhere, and leaves the old table **frozen**:
 never written, never dropped. Only migrations the old tool hadn't
 applied yet actually run.
 
@@ -103,7 +116,7 @@ Two guard rails:
   skipped.
 
 Databases migrated by older versions of Alchemy are upgraded to the
-current table shape in place, at whatever table name their state
+current table shape in place, at whatever location their state
 recorded — no action needed.
 
 Each database documents its own mechanics — transactionality and
